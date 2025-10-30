@@ -1,22 +1,39 @@
 import streamlit as st
-# Réduire l’espace blanc en haut de la page
-st.markdown(
-    """
-    <style>
-        .block-container {
-            padding-top: 1rem;  /* réduit la marge supérieure */
-            padding-bottom: 1rem; /* optionnel : réduit aussi en bas */
-        }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 from collections import defaultdict
 import itertools
 import graphviz
 
 EPS = 'ε'
+
+# -------------------------------------------------------
+# Ajout : gestion de l’opérateur + (a+ → a.a*, (a|b)+ → (a|b).(a|b)*)
+# -------------------------------------------------------
+def expand_plus(regex):
+    res = ''
+    i = 0
+    while i < len(regex):
+        c = regex[i]
+        if c == '+':
+            prev = res[-1]
+            if prev == ')':
+                count = 0
+                j = len(res) - 1
+                while j >= 0:
+                    if res[j] == ')':
+                        count += 1
+                    elif res[j] == '(':
+                        count -= 1
+                        if count == 0:
+                            break
+                    j -= 1
+                group = res[j:]
+                res = res[:j] + group + '.' + group + '*'
+            else:
+                res = res[:-1] + prev + '.' + prev + '*'
+        else:
+            res += c
+        i += 1
+    return res
 
 # -------------------------
 # Helpers : regex -> postfix
@@ -111,14 +128,6 @@ def thompson_with_steps(postfix):
             transitions[f.accept].append((EPS, a))
             new_trans += [(s, EPS, f.start), (s, EPS, a), (f.accept, EPS, f.start), (f.accept, EPS, a)]
             stack.append(Fragment(s, a))
-        elif tok == '+':
-            f = stack.pop()
-            s, a = next(counter), next(counter)
-            transitions[s].append((EPS, f.start))
-            transitions[f.accept].append((EPS, f.start))
-            transitions[f.accept].append((EPS, a))
-            new_trans += [(s, EPS, f.start), (f.accept, EPS, f.start), (f.accept, EPS, a)]
-            stack.append(Fragment(s, a))
         elif tok == '?':
             f = stack.pop()
             s, a = next(counter), next(counter)
@@ -129,6 +138,9 @@ def thompson_with_steps(postfix):
             stack.append(Fragment(s, a))
         else:
             raise ValueError(f"Symbole non supporté: {tok}")
+        # ✅ éviter états finaux isolés
+        if isinstance(stack[-1], Fragment):
+            transitions[stack[-1].accept] = transitions.get(stack[-1].accept, [])
         snapshot(tok, new_trans)
 
     if len(stack) != 1:
@@ -199,7 +211,7 @@ def nfa_to_dfa(nfa):
     return {'states': list(dfa_states.keys()), 'start': start_set, 'accepts': dfa_accepts, 'transitions': dfa_trans, 'symbols': symbols}
 
 # -------------------------
-# Utility : build DOT (organisé et stable)
+# Utility : build DOT
 # -------------------------
 def transitions_to_dot(transitions, new_edges=None, start=None, accept=None):
     g = graphviz.Digraph()
@@ -208,9 +220,6 @@ def transitions_to_dot(transitions, new_edges=None, start=None, accept=None):
     if start is not None:
         g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
         g.edge('start', str(start))
-  #  if start is not None:
-  #      g.node('start', shape='point')
-  #      g.edge('start', str(start))
 
     all_states = set(transitions.keys())
     for s, lst in transitions.items():
@@ -228,7 +237,6 @@ def transitions_to_dot(transitions, new_edges=None, start=None, accept=None):
             color = "red" if new_edges and (s, sym, d) in new_edges else "black"
             label = EPS if sym == EPS or sym is None else sym
             g.edge(str(s), str(d), label=label, color=color)
-
     return g
 
 # -------------------------
@@ -243,13 +251,8 @@ with col_title:
     st.title("Algorithme de Thompson")
     st.caption("Construction de l’automate de Thompson et conversion NFA → DFA")
 
-#with st.sidebar:
-#    st.header("Entrée")
- #   regex = st.text_input("Expression régulière", value="ab")
- #   build = st.button("Construire l'automate")
-  #  show_dfa = st.checkbox("Afficher le DFA (après NFA)", value=False)
 st.header("Entrée")
-regex = st.text_input("Expression régulière", value="ab")
+regex = st.text_input("Expression régulière", value="(a|b)*ab(a|b)*")
 
 colA, colB = st.columns([1, 1])
 with colA:
@@ -258,7 +261,6 @@ with colB:
     show_dfa = st.checkbox("Afficher le DFA (après NFA)", value=False)
 
 st.divider()
-
 
 if 'steps' not in st.session_state:
     st.session_state.steps = []
@@ -277,7 +279,8 @@ next_btn = nav2.button("Étape suivante")
 
 if build:
     try:
-        regex2 = insert_concat(regex.strip())
+        regex_expanded = expand_plus(regex.strip())
+        regex2 = insert_concat(regex_expanded)
         postfix = to_postfix(regex2)
         steps, final_nfa = thompson_with_steps(postfix)
         st.session_state.steps = steps
@@ -314,9 +317,8 @@ if st.session_state.steps:
                 gdfa.node("∅", shape='circle', style='filled', fillcolor='lightgrey', width='1', height='1', fixedsize='true')
                 continue
             name = "{" + ",".join(map(str, sorted(state))) + "}"
-            # Insère un retour à la ligne si le label est trop long
             if len(name) > 20:
-                name = name.replace(',', ',\n')
+                name = name.replace(',', ',\\n')
             shape = 'doublecircle' if state in dfa['accepts'] else 'circle'
             gdfa.node(name, shape=shape, width='1', height='1', fixedsize='true')
         for (src, sym), dest in dfa['transitions'].items():
