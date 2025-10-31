@@ -177,7 +177,6 @@ def nfa_to_dfa(nfa):
 
 # ---------- DFA Minimisation ----------
 def minimize_dfa(dfa):
-    # Ici dfa a déjà des noms A,B,C...
     states = list(dfa['states'])
     symbols = dfa['symbols']
     accepts = dfa['accepts']
@@ -205,7 +204,6 @@ def minimize_dfa(dfa):
                 else: newP.append(Y)
             P=newP
 
-    # Renommage I, II, III...
     roman=["I","II","III","IV","V","VI","VII","VIII","IX","X"]
     state_names = {}
     legend={}
@@ -214,7 +212,6 @@ def minimize_dfa(dfa):
         state_names[frozenset(block)]=name
         legend[name]="{" + ",".join(sorted(block)) + "}"
 
-    # transitions
     new_trans={}
     for blk in P:
         src = state_names[frozenset(blk)]
@@ -234,23 +231,33 @@ def minimize_dfa(dfa):
 
 # ---------- Graph builder ----------
 def build_nfa_graph(nfa,new_edges=None):
-    g=graphviz.Digraph()
-    g.attr(rankdir='LR',ranksep='1',nodesep='0.5')
-    g.attr('node',shape='circle',fixedsize='true',width='1',height='1',fontsize='12')
-    transitions = nfa['transitions']; start = nfa['start']; accept = nfa['accept']
-    g.node('start',shape='point',width='0.1',height='0.1',fixedsize='true'); g.edge('start',f"n{start}")
-    all_states=set(transitions.keys())
-    for s,lst in transitions.items(): 
-        for _,d in lst: all_states.add(d)
-    for s in sorted(all_states,key=lambda x:int(str(x)) if str(x).isdigit() else str(x)):
-        shape='doublecircle' if s==accept else 'circle'
-        color='red' if s==start else 'black'
-        g.node(f"n{s}",label=str(s),shape=shape,color=color,width='1',height='1',fixedsize='true')
-    for s,lst in transitions.items():
-        for sym,d in lst:
-            label=EPS if sym==EPS or sym is None else str(sym)
-            color="red" if new_edges and (s,sym,d) in new_edges else "black"
-            g.edge(f"n{s}",f"n{d}",label=label,color=color)
+    g = graphviz.Digraph()
+    g.attr(rankdir='LR', ranksep='1', nodesep='0.6')
+    g.attr('node', shape='circle', fixedsize='true', width='1.2', height='1.2', fontsize='18')
+
+    transitions = nfa['transitions']
+    start = nfa['start']
+    accept = nfa['accept']
+
+    g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
+    g.edge('start', f"n{start}", fontsize='16')
+
+    all_states = set(transitions.keys())
+    for s, lst in transitions.items():
+        for _, d in lst:
+            all_states.add(d)
+
+    for s in sorted(all_states, key=lambda x: int(str(x)) if str(x).isdigit() else str(x)):
+        shape = 'doublecircle' if s == accept else 'circle'
+        color = 'red' if s == start else 'black'
+        g.node(f"n{s}", label=str(s), shape=shape, color=color, width='1.2', height='1.2', fontsize='18')
+
+    for s, lst in transitions.items():
+        for sym, d in lst:
+            label = EPS if sym == EPS or sym is None else str(sym)
+            color = "red" if new_edges and (s, sym, d) in new_edges else "black"
+            g.edge(f"n{s}", f"n{d}", label=label, color=color, fontsize='16')
+
     return g
 
 def build_graph_minimized(dfa_min):
@@ -269,10 +276,10 @@ def build_graph_minimized(dfa_min):
 st.set_page_config(page_title="Algorithme de Thompson", layout="wide")
 col_logo,col_title=st.columns([1,5])
 with col_logo:
-    try: st.image("logo.png",width=100)
+    try: st.image("logo.png",width=150)
     except: pass
 with col_title:
-    st.title("Algorithme de Thompson")
+    st.markdown("<h1 style='margin-top:-20px;'>Algorithme de Thompson</h1>", unsafe_allow_html=True)
     st.caption("NFA → DFA → DFA minimisé (états abrégés + légende)")
 
 regex = st.text_input("Expression régulière", value="(a|b)*ab(a|b)*")
@@ -285,11 +292,11 @@ if 'steps' not in st.session_state: st.session_state.steps=[]
 if 'final_nfa' not in st.session_state: st.session_state.final_nfa=None
 if 'idx' not in st.session_state: st.session_state.idx=0
 
-col1,col2=st.columns([1,2])
-postfix_box=col1.empty(); info_box=col1.empty(); graph_box=col2.empty()
-nav1,nav2=col1.columns([1,1])
+nav1,nav2=st.columns([1,1])
 prev_btn=nav1.button("← Étape précédente")
 next_btn=nav2.button("Étape suivante")
+
+graph_placeholder = st.empty()
 
 if build_btn:
     try:
@@ -307,14 +314,13 @@ if st.session_state.steps:
     if next_btn and st.session_state.idx<len(st.session_state.steps)-1: st.session_state.idx+=1
     if prev_btn and st.session_state.idx>0: st.session_state.idx-=1
     idx=st.session_state.idx; step=st.session_state.steps[idx]
-    postfix_box.markdown(f"**Étape {idx+1}/{len(st.session_state.steps)} — Symbole traité :** {step['tok']}")
-    info_box.write(f"Pile : {step['stack']}")
+    st.markdown(f"**Étape {idx+1}/{len(st.session_state.steps)} — Symbole traité :** {step['tok']}")
+    st.write(f"Pile : {step['stack']}")
     temp_nfa={'start':st.session_state.final_nfa['start'],'accept':st.session_state.final_nfa['accept'],
               'transitions':step['transitions']}
     dot_nfa=build_nfa_graph(temp_nfa, step.get('new',[]))
-    graph_box.graphviz_chart(dot_nfa.source)
+    graph_placeholder.graphviz_chart(dot_nfa.source)
 
-    # DFA
     if show_dfa:
         dfa=nfa_to_dfa(st.session_state.final_nfa)
         gdfa=graphviz.Digraph()
@@ -330,7 +336,6 @@ if st.session_state.steps:
         st.graphviz_chart(gdfa.source)
         st.markdown("\n".join([f"- **{k}** = `{v}`" for k,v in dfa['legend'].items()]))
 
-    # DFA minimisé
     if show_min:
         dfa=nfa_to_dfa(st.session_state.final_nfa)
         min_dfa=minimize_dfa(dfa)
