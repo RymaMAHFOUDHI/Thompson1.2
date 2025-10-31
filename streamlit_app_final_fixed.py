@@ -250,13 +250,13 @@ def build_nfa_graph(nfa,new_edges=None):
     for s in sorted(all_states, key=lambda x: int(str(x)) if str(x).isdigit() else str(x)):
         shape = 'doublecircle' if s == accept else 'circle'
         color = 'red' if s == start else 'black'
-        g.node(f"n{s}", label=str(s), shape=shape, color=color, width='1.2', height='1.2', fontsize='18')
+        g.node(f"n{s}", label=str(s), shape=shape, color=color, width='1.2', height='1.2', fontsize='28')
 
     for s, lst in transitions.items():
         for sym, d in lst:
             label = EPS if sym == EPS or sym is None else str(sym)
             color = "red" if new_edges and (s, sym, d) in new_edges else "black"
-            g.edge(f"n{s}", f"n{d}", label=label, color=color, fontsize='16')
+            g.edge(f"n{s}", f"n{d}", label=label, color=color, fontsize='28')
 
     return g
 
