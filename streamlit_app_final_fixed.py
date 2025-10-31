@@ -233,14 +233,14 @@ def minimize_dfa(dfa):
 def build_nfa_graph(nfa,new_edges=None):
     g = graphviz.Digraph()
     g.attr(rankdir='LR', ranksep='1', nodesep='0.6')
-    g.attr('node', shape='circle', fixedsize='true', width='1.2', height='1.2', fontsize='18')
+    g.attr('node', shape='circle', fixedsize='true', width='1.2', height='1.2', fontsize='28')
 
     transitions = nfa['transitions']
     start = nfa['start']
     accept = nfa['accept']
 
     g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
-    g.edge('start', f"n{start}", fontsize='16')
+    g.edge('start', f"n{start}", fontsize='28')
 
     all_states = set(transitions.keys())
     for s, lst in transitions.items():
