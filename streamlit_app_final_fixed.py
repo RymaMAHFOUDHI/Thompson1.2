@@ -402,7 +402,6 @@ if st.session_state.steps:
     postfix_box.markdown(f"**Étape {idx+1}/{len(st.session_state.steps)} — Symbole traité :** {step['tok']}")
     info_box.write(f"Pile : {step['stack']}")
 
-    # Création d'un NFA temporaire pour éviter KeyError
     temp_nfa = {
         'start': st.session_state.final_nfa['start'],
         'accept': st.session_state.final_nfa['accept'],
@@ -421,4 +420,11 @@ if st.session_state.steps:
 
     if show_min and st.session_state.final_nfa:
         dfa = nfa_to_dfa(st.session_state.final_nfa)
-        min_dfa
+        min_dfa = minimize_dfa(dfa)
+        st.subheader("DFA minimisé (états abrégés)")
+        gmin, m_mapping, m_legend = build_dfa_graph(min_dfa, abbreviate_names=True)
+        st.graphviz_chart(gmin.source)
+        leg_lines = [f'- **{lab}** = `{content}`' for lab, content in m_legend.items()]
+        st.markdown('\\n'.join(leg_lines))
+else:
+    st.info("Entrez une expression régulière et cliquez sur *Construire l'automate*.")
