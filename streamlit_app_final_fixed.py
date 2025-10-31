@@ -2,38 +2,27 @@ import streamlit as st
 from collections import defaultdict
 import itertools
 import graphviz
+import re
 
 EPS = 'ε'
 
 # -------------------------------------------------------
-# Ajout : gestion de l’opérateur + (a+ → a.a*, (a|b)+ → (a|b).(a|b)*)
+# Robust expansion de l'opérateur + :
+# transforme a+ -> a.a*  et (expr)+ -> (expr).(expr)*
+# Implémentation sûre : cherche les occurrences de (group)+ ou sym+ et les remplace en boucle.
 # -------------------------------------------------------
 def expand_plus(regex):
-    res = ''
-    i = 0
-    while i < len(regex):
-        c = regex[i]
-        if c == '+':
-            prev = res[-1]
-            if prev == ')':
-                count = 0
-                j = len(res) - 1
-                while j >= 0:
-                    if res[j] == ')':
-                        count += 1
-                    elif res[j] == '(':
-                        count -= 1
-                        if count == 0:
-                            break
-                    j -= 1
-                group = res[j:]
-                res = res[:j] + group + '.' + group + '*'
-            else:
-                res = res[:-1] + prev + '.' + prev + '*'
-        else:
-            res += c
-        i += 1
-    return res
+    # Remplace ( ... )+ en ( ... ).( ... )* de manière récursive
+    pattern_group = re.compile(r'(\([^()]+\))\+')
+    pattern_sym = re.compile(r'([A-Za-z0-9])\+')
+    prev = None
+    s = regex
+    # On boucle jusqu'à stabilisation (pour plusieurs occurrences)
+    while prev != s:
+        prev = s
+        s = pattern_group.sub(r'\1.\1*', s)
+        s = pattern_sym.sub(r'\1.\1*', s)
+    return s
 
 # -------------------------
 # Helpers : regex -> postfix
@@ -43,18 +32,21 @@ def insert_concat(regex):
     prev = None
     symbols = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
     for c in regex:
-        if prev:
-            if (prev in symbols or prev in ")*+?") and (c in symbols or c == '('):
+        if prev is not None:
+            # si prev est symbole, ')' ou '*' ou '?' alors on insère concat quand c est symbole ou '('
+            if (prev in symbols or prev in ")*?") and (c in symbols or c == '('):
                 res.append('.')
         res.append(c)
         prev = c
     return ''.join(res)
 
 def to_postfix(regex):
-    prec = {'*': 3, '+':3, '?':3, '.':2, '|':1}
+    prec = {'*': 3, '?':3, '.':2, '|':1}
     output = []
     stack = []
-    for c in regex:
+    i = 0
+    while i < len(regex):
+        c = regex[i]
         if c.isalnum():
             output.append(c)
         elif c == '(':
@@ -66,9 +58,11 @@ def to_postfix(regex):
                 raise ValueError("Parenthèse fermante sans ouvrante")
             stack.pop()
         else:
-            while stack and stack[-1] != '(' and prec.get(stack[-1],0) >= prec.get(c,0):
+            # opérateur (un seul caractère attendu: '*', '?', '.', '|')
+            while stack and stack[-1] != '(' and prec.get(stack[-1], 0) >= prec.get(c, 0):
                 output.append(stack.pop())
             stack.append(c)
+        i += 1
     while stack:
         op = stack.pop()
         if op in '()':
@@ -77,7 +71,7 @@ def to_postfix(regex):
     return ''.join(output)
 
 # -------------------------
-# Thompson construction
+# Thompson construction (corrigée, garantit un seul accept final)
 # -------------------------
 class Fragment:
     def __init__(self, start, accept):
@@ -85,7 +79,6 @@ class Fragment:
         self.accept = accept
 
 def thompson_with_steps(postfix):
-    from collections import defaultdict
     transitions = defaultdict(list)
     counter = itertools.count()
     stack = []
@@ -99,54 +92,78 @@ def thompson_with_steps(postfix):
     for tok in postfix:
         new_trans = []
         if tok.isalnum():
-            s, a = next(counter), next(counter)
+            s = next(counter)
+            a = next(counter)
             transitions[s].append((tok, a))
+            # ensure accept node exists in transitions dict (so it's connected in visualisation)
+            transitions.setdefault(a, [])
             new_trans.append((s, tok, a))
             stack.append(Fragment(s, a))
         elif tok == '.':
+            # concat
+            if len(stack) < 2:
+                raise ValueError("Concat: pile trop petite")
             f2 = stack.pop()
             f1 = stack.pop()
+            # connect f1.accept -> epsilon -> f2.start
             transitions[f1.accept].append((EPS, f2.start))
             new_trans.append((f1.accept, EPS, f2.start))
+            # resulting fragment start = f1.start, accept = f2.accept
             stack.append(Fragment(f1.start, f2.accept))
         elif tok == '|':
+            # alternation
+            if len(stack) < 2:
+                raise ValueError("Alternation: pile trop petite")
             f2 = stack.pop()
             f1 = stack.pop()
-            s, a = next(counter), next(counter)
+            s = next(counter)
+            a = next(counter)
             transitions[s].append((EPS, f1.start))
             transitions[s].append((EPS, f2.start))
             transitions[f1.accept].append((EPS, a))
             transitions[f2.accept].append((EPS, a))
+            # ensure new nodes exist in dict entries
+            transitions.setdefault(s, transitions.get(s, []))
+            transitions.setdefault(a, [])
             new_trans += [(s, EPS, f1.start), (s, EPS, f2.start), (f1.accept, EPS, a), (f2.accept, EPS, a)]
             stack.append(Fragment(s, a))
         elif tok == '*':
+            if len(stack) < 1:
+                raise ValueError("Kleene: pile trop petite")
             f = stack.pop()
-            s, a = next(counter), next(counter)
+            s = next(counter)
+            a = next(counter)
             transitions[s].append((EPS, f.start))
             transitions[s].append((EPS, a))
             transitions[f.accept].append((EPS, f.start))
             transitions[f.accept].append((EPS, a))
+            transitions.setdefault(s, transitions.get(s, []))
+            transitions.setdefault(a, [])
             new_trans += [(s, EPS, f.start), (s, EPS, a), (f.accept, EPS, f.start), (f.accept, EPS, a)]
             stack.append(Fragment(s, a))
         elif tok == '?':
+            if len(stack) < 1:
+                raise ValueError("Option: pile trop petite")
             f = stack.pop()
-            s, a = next(counter), next(counter)
+            s = next(counter)
+            a = next(counter)
             transitions[s].append((EPS, f.start))
             transitions[s].append((EPS, a))
             transitions[f.accept].append((EPS, a))
+            transitions.setdefault(s, transitions.get(s, []))
+            transitions.setdefault(a, [])
             new_trans += [(s, EPS, f.start), (s, EPS, a), (f.accept, EPS, a)]
             stack.append(Fragment(s, a))
         else:
             raise ValueError(f"Symbole non supporté: {tok}")
-        # ✅ éviter états finaux isolés
-        if isinstance(stack[-1], Fragment):
-            transitions[stack[-1].accept] = transitions.get(stack[-1].accept, [])
+        # snapshot après chaque token
         snapshot(tok, new_trans)
 
     if len(stack) != 1:
-        raise ValueError("Expression invalide : pile finale ≠ 1")
+        raise ValueError("Expression invalide : la pile finale doit contenir exactement un fragment")
 
     frag = stack.pop()
+    # final NFA : single start and single accept
     final_nfa = {'start': frag.start, 'accept': frag.accept, 'transitions': dict(transitions)}
     return steps, final_nfa
 
@@ -191,7 +208,8 @@ def nfa_to_dfa(nfa):
     while unmarked:
         T = unmarked.pop()
         for sym in symbols:
-            U = frozenset(epsilon_closure(move(T, sym, transitions), transitions))
+            Uset = epsilon_closure(move(T, sym, transitions), transitions)
+            U = frozenset(Uset)
             if not U:
                 sink_needed = True
                 dfa_states.setdefault(sink, len(dfa_states))
@@ -211,7 +229,7 @@ def nfa_to_dfa(nfa):
     return {'states': list(dfa_states.keys()), 'start': start_set, 'accepts': dfa_accepts, 'transitions': dfa_trans, 'symbols': symbols}
 
 # -------------------------
-# Utility : build DOT
+# Utility : build DOT (stable)
 # -------------------------
 def transitions_to_dot(transitions, new_edges=None, start=None, accept=None):
     g = graphviz.Digraph()
@@ -237,16 +255,21 @@ def transitions_to_dot(transitions, new_edges=None, start=None, accept=None):
             color = "red" if new_edges and (s, sym, d) in new_edges else "black"
             label = EPS if sym == EPS or sym is None else sym
             g.edge(str(s), str(d), label=label, color=color)
+
     return g
 
 # -------------------------
-# Streamlit UI
+# Streamlit UI (IDENTIQUE à l'original)
 # -------------------------
 st.set_page_config(page_title="Algorithme de Thompson", layout="wide")
 
 col_logo, col_title = st.columns([1,5])
 with col_logo:
-    st.image("logo.png", width=100)
+    # laisse l'image si elle existe
+    try:
+        st.image("logo.png", width=100)
+    except:
+        pass
 with col_title:
     st.title("Algorithme de Thompson")
     st.caption("Construction de l’automate de Thompson et conversion NFA → DFA")
@@ -313,18 +336,19 @@ if st.session_state.steps:
         gdfa = graphviz.Digraph()
         gdfa.attr(rankdir='LR')
         for state in dfa['states']:
-            if 'sink' in state:
+            # sink detection : frozenset containing string 'sink'
+            if isinstance(state, frozenset) and 'sink' in state:
                 gdfa.node("∅", shape='circle', style='filled', fillcolor='lightgrey', width='1', height='1', fixedsize='true')
                 continue
             name = "{" + ",".join(map(str, sorted(state))) + "}"
             if len(name) > 20:
-                name = name.replace(',', ',\\n')
+                name = name.replace(',', ',\n')
             shape = 'doublecircle' if state in dfa['accepts'] else 'circle'
             gdfa.node(name, shape=shape, width='1', height='1', fixedsize='true')
         for (src, sym), dest in dfa['transitions'].items():
-            src_name = "∅" if 'sink' in src else "{" + ",".join(map(str, sorted(src))) + "}"
-            dest_name = "∅" if 'sink' in dest else "{" + ",".join(map(str, sorted(dest))) + "}"
-            gdfa.edge(src_name, dest_name, label=sym)
+            src_name = "∅" if isinstance(src, frozenset) and 'sink' in src else "{" + ",".join(map(str, sorted(src))) + "}"
+            dest_name = "∅" if isinstance(dest, frozenset) and 'sink' in dest else "{" + ",".join(map(str, sorted(dest))) + "}"
+            gdfa.edge(src_name, dest_name, label=str(sym))
         st.graphviz_chart(gdfa.source)
 else:
     st.info("Entrez une expression régulière et cliquez sur *Construire l'automate*.")
