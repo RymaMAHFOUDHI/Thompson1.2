@@ -230,33 +230,65 @@ def minimize_dfa(dfa):
             'transitions':new_trans,'symbols':symbols,'legend':legend}
 
 # ---------- Graph builder ----------
-def build_nfa_graph(nfa,new_edges=None):
-    g = graphviz.Digraph()
-    g.attr(rankdir='LR', ranksep='1', nodesep='0.6')
-    g.attr('node', shape='circle', fixedsize='true', width='1.2', height='1.2', fontsize='28')
+def build_nfa_graph(nfa, new_edges=None):
+    """
+    Graphe NFA avec police et nœuds agrandis.
+    Remplace cette fonction dans ton fichier pour augmenter la lisibilité du NFA.
+    """
+    g = graphviz.Digraph(format='png')
+    # orientation + espacement
+    g.attr(rankdir='LR', ranksep='1.2', nodesep='0.9')
+    # taille des noeuds et police (très lisible)
+    g.attr('node', shape='circle', fixedsize='true', width='1.6', height='1.6',
+           fontsize='28', fontname='Helvetica')
+    # pour les arêtes (labels)
+    g.attr('edge', fontsize='22', fontname='Helvetica')
 
     transitions = nfa['transitions']
     start = nfa['start']
     accept = nfa['accept']
 
-    g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
-    g.edge('start', f"n{start}", fontsize='28')
+    # petit point pour l'état initial
+    g.node('start', shape='point', width='0.12', height='0.12', fixedsize='true')
+    # on peut colorer la flèche d'arrivée pour la repérer
+    g.edge('start', f"n{start}", _attributes={'fontsize':'20'})
 
+    # rassembler tous les états (sources + cibles)
     all_states = set(transitions.keys())
     for s, lst in transitions.items():
         for _, d in lst:
             all_states.add(d)
 
-    for s in sorted(all_states, key=lambda x: int(str(x)) if str(x).isdigit() else str(x)):
-        shape = 'doublecircle' if s == accept else 'circle'
-        color = 'red' if s == start else 'black'
-        g.node(f"n{s}", label=str(s), shape=shape, color=color, width='1.2', height='1.2', fontsize='28')
+    # créer les noeuds avec double cercle pour acceptants et couleur pour l'initial
+    for s in sorted(all_states, key=lambda x: (str(x).isdigit(), str(x))):
+        is_accept = (s == accept)
+        is_start = (s == start)
+        attrs = {}
+        if is_accept:
+            attrs['shape'] = 'doublecircle'
+        else:
+            attrs['shape'] = 'circle'
+        if is_start:
+            attrs['color'] = 'red'
+            attrs['penwidth'] = '2'
+        # label et police explicites
+        attrs['label'] = str(s)
+        attrs['fontsize'] = '28'
+        attrs['fontname'] = 'Helvetica'
+        attrs['fixedsize'] = 'true'
+        attrs['width'] = '1.6'
+        attrs['height'] = '1.6'
+        g.node(f"n{s}", **attrs)
 
+    # ajouter les arêtes (labels agrandis)
     for s, lst in transitions.items():
         for sym, d in lst:
             label = EPS if sym == EPS or sym is None else str(sym)
-            color = "red" if new_edges and (s, sym, d) in new_edges else "black"
-            g.edge(f"n{s}", f"n{d}", label=label, color=color, fontsize='28')
+            edge_attrs = {'label': label, 'fontsize': '22', 'fontname': 'Helvetica'}
+            if new_edges and (s, sym, d) in new_edges:
+                edge_attrs['color'] = 'red'
+                edge_attrs['penwidth'] = '2'
+            g.edge(f"n{s}", f"n{d}", **edge_attrs)
 
     return g
 
