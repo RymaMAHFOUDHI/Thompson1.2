@@ -28,10 +28,13 @@ def build_graph_multisym(auto, start_key='start', accept_key='accept', transitio
     dot = graphviz.Digraph()
     dot.attr(rankdir='LR', size='8,5')
 
+    # Police agrandie seulement si enlarge=True (NFA)
     if enlarge:
-        dot.attr('node', shape='circle', fontsize='22', width='1.2', height='1.2')
+        dot.attr('node', shape='circle', fontsize='28', width='1.4', height='1.4')
+        dot.attr('edge', fontsize='24')
     else:
         dot.attr('node', shape='circle', fontsize='18')
+        dot.attr('edge', fontsize='16')
 
     start = auto[start_key]
     accept = auto[accept_key]
@@ -63,7 +66,6 @@ def build_graph_multisym(auto, start_key='start', accept_key='accept', transitio
     return dot
 
 # ---------- EXEMPLE SIMULÉ ----------
-# NFA (agrandi)
 nfa = {
     'start': 'q0',
     'accept': ['q2'],
@@ -73,7 +75,6 @@ nfa = {
     }
 }
 
-# DFA renommé A,B,C
 dfa = {
     'start': 'A',
     'accept': ['C'],
@@ -84,7 +85,6 @@ dfa = {
     }
 }
 
-# DFA minimisé renommé I,II,III
 min_dfa = {
     'start': 'I',
     'accept': ['III'],
@@ -110,7 +110,6 @@ with col_next:
 
 step = st.session_state.step
 
-# Centrer le graphe
 st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
 
 if step == 0:
