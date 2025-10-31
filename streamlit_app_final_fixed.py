@@ -6,11 +6,7 @@ import re
 
 EPS = 'ε'
 
-# -----------------------
-# expand_plus: a+ -> a.a* , (expr)+ -> (expr).(expr)*
-# -----------------------
 def expand_plus(regex):
-    # Remplace ( ... )+ en ( ... ).( ... )* et sym+ en sym.sym*
     pattern_group = re.compile(r'(\([^()]+\))\+')
     pattern_sym = re.compile(r'([A-Za-z0-9])\+')
     prev = None
@@ -21,9 +17,6 @@ def expand_plus(regex):
         s = pattern_sym.sub(r'\1.\1*', s)
     return s
 
-# -------------------------
-# Helpers : regex -> postfix
-# -------------------------
 def insert_concat(regex):
     res = []
     prev = None
@@ -37,7 +30,6 @@ def insert_concat(regex):
     return ''.join(res)
 
 def to_postfix(regex):
-    # opérateurs: * ? (unaires), . concat, | alternation
     prec = {'*':3, '?':3, '.':2, '|':1}
     output = []
     stack = []
@@ -66,9 +58,6 @@ def to_postfix(regex):
         output.append(op)
     return ''.join(output)
 
-# -------------------------
-# Thompson construction (un seul accept final garanti)
-# -------------------------
 class Fragment:
     def __init__(self, start, accept):
         self.start = start
@@ -90,7 +79,7 @@ def thompson_with_steps(postfix):
         if tok.isalnum():
             s = next(counter); a = next(counter)
             transitions[s].append((tok, a))
-            transitions.setdefault(a, [])   # assure que l'état accept existe dans le dict
+            transitions.setdefault(a, [])
             new_trans.append((s, tok, a))
             stack.append(Fragment(s, a))
         elif tok == '.':
@@ -149,9 +138,6 @@ def thompson_with_steps(postfix):
     final_nfa = {'start': frag.start, 'accept': frag.accept, 'transitions': dict(transitions)}
     return steps, final_nfa
 
-# -------------------------
-# Conversion NFA -> DFA
-# -------------------------
 def epsilon_closure(states, transitions):
     closure = set(states)
     stack = list(states)
@@ -210,16 +196,12 @@ def nfa_to_dfa(nfa):
 
     return {'states': list(dfa_states.keys()), 'start': start_set, 'accepts': dfa_accepts, 'transitions': dfa_trans, 'symbols': symbols}
 
-# -------------------------
-# Minimisation DFA (Hopcroft) -> retourne nouvelle structure DFA minimale
-# -------------------------
 def minimize_dfa(dfa):
     states = list(dfa['states'])
     symbols = dfa['symbols']
     accepts = set(dfa['accepts'])
     non_accepts = set(states) - accepts
 
-    # Initial partition
     P = []
     if accepts:
         P.append(frozenset(accepts))
@@ -227,7 +209,6 @@ def minimize_dfa(dfa):
         P.append(frozenset(non_accepts))
     W = [p for p in P]
 
-    # transition function mapping state->symbol->dest
     trans = {}
     for s in states:
         trans[s] = {}
@@ -238,7 +219,6 @@ def minimize_dfa(dfa):
     while W:
         A = W.pop()
         for c in symbols:
-            # X = states that go to A on c
             X = set()
             for q in states:
                 dest = trans[q].get(c, None)
@@ -264,8 +244,6 @@ def minimize_dfa(dfa):
                     newP.append(Y)
             P = newP
 
-    # Build new DFA: each block in P is a state
-    block_id = {b:i for i,b in enumerate(P)}
     new_states = list(P)
     new_start = None
     new_accepts = set()
@@ -280,11 +258,8 @@ def minimize_dfa(dfa):
         repr_state = next(iter(b))
         for sym in symbols:
             dest = dfa['transitions'].get((repr_state, sym), None)
-            # dest might be None (sink absent), treat as unique sink block if needed
             if dest is None:
-                # ignore (no transition)
                 continue
-            # find block containing dest
             for blk in new_states:
                 if dest in blk:
                     new_trans[(b, sym)] = blk
@@ -292,65 +267,70 @@ def minimize_dfa(dfa):
 
     return {'states': new_states, 'start': new_start, 'accepts': new_accepts, 'transitions': new_trans, 'symbols': symbols}
 
-# -------------------------
-# Utility : build DOT (stable)
-# -------------------------
-def transitions_to_dot(transitions, new_edges=None, start=None, accept=None):
+def abbreviate(states):
+    mapping = {}
+    legend = {}
+    for i, s in enumerate(states):
+        base = chr(ord('A') + (i % 26))
+        suffix = str(i // 26) if i // 26 > 0 else ''
+        lab = base + suffix
+        mapping[s] = lab
+        if isinstance(s, frozenset):
+            content = "{" + ",".join(map(str, sorted(s))) + "}"
+        else:
+            content = str(s)
+        legend[lab] = content
+    return mapping, legend
+
+def build_nfa_graph(nfa, new_edges=None):
     g = graphviz.Digraph()
     g.attr(rankdir='LR', ranksep='1', nodesep='0.5')
     g.attr('node', shape='circle', fixedsize='true', width='1', height='1', fontsize='12')
-    if start is not None:
-        g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
-        g.edge('start', str(start))
-
+    transitions = nfa['transitions']
+    start = nfa['start']
+    accept = nfa['accept']
+    g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
+    g.edge('start', f"n{start}")
     all_states = set(transitions.keys())
-    # transitions keys may be (src,sym)->dest (for DFA) or src->list...
-    # detect format: if values are lists -> NFA-style; else DFA-style
-    sample = None
-    for v in transitions.values():
-        sample = v
-        break
-
-    if isinstance(sample, list) or sample is None:
-        # NFA-style: transitions: {state: [(sym,dest), ...], ...}
-        for s, lst in transitions.items():
-            for _, d in lst:
-                all_states.add(d)
-        for s in sorted(all_states, key=lambda x: str(x)):
-            if s == accept:
-                g.node(str(s), shape='doublecircle')
-            else:
-                g.node(str(s))
-        for s, lst in transitions.items():
-            for sym, d in lst:
-                color = "red" if new_edges and (s, sym, d) in new_edges else "black"
-                label = EPS if sym == EPS or sym is None else str(sym)
-                g.edge(str(s), str(d), label=label, color=color)
-    else:
-        # DFA-style: transitions: {(src,sym): dest, ...}
-        nodes = set()
-        for (src, sym), dest in transitions.items():
-            nodes.add(src); nodes.add(dest)
-        for s in sorted(nodes, key=lambda x: str(x)):
-            if s == accept:
-                g.node(str(s), shape='doublecircle')
-            else:
-                # display block/set nicely if it's a frozenset
-                label = str(s)
-                if isinstance(s, frozenset):
-                    label = "{" + ",".join(map(str, sorted(s))) + "}"
-                    if len(label) > 20:
-                        label = label.replace(',', ',\n')
-                g.node(str(s), label=label)
-        for (src, sym), dest in transitions.items():
+    for s, lst in transitions.items():
+        for _, d in lst:
+            all_states.add(d)
+    for s in sorted(all_states, key=lambda x: int(str(x)) if str(x).isdigit() else str(x)):
+        if s == accept:
+            g.node(f"n{s}", label=str(s), shape='doublecircle', width='1', height='1', fixedsize='true')
+        else:
+            g.node(f"n{s}", label=str(s), shape='circle', width='1', height='1', fixedsize='true')
+    for s, lst in transitions.items():
+        for sym, d in lst:
             label = EPS if sym == EPS or sym is None else str(sym)
-            g.edge(str(src), str(dest), label=label)
+            color = "red" if new_edges and (s, sym, d) in new_edges else "black"
+            g.edge(f"n{s}", f"n{d}", label=label, color=color)
     return g
 
-# -------------------------
-# Streamlit UI
-# -------------------------
-st.set_page_config(page_title="Algorithme de Thompson", layout="wide")
+def build_dfa_graph(dfa, abbreviate_names=True):
+    states = dfa['states']
+    mapping, legend = abbreviate(states) if abbreviate_names else ({s: ("{" + ",".join(map(str, sorted(s))) + "}") for s in states}, {})
+    g = graphviz.Digraph()
+    g.attr(rankdir='LR', ranksep='1', nodesep='0.5')
+    g.attr('node', shape='circle', fixedsize='true', width='1.2', height='1.2', fontsize='12')
+    start = dfa['start']
+    accept_set = set(dfa['accepts'])
+    g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
+    start_id = mapping.get(start, str(start))
+    g.edge('start', start_id)
+    for s in states:
+        nid = mapping.get(s, str(s))
+        label = nid
+        shape = 'doublecircle' if s in accept_set else 'circle'
+        g.node(nid, label=label, shape=shape, width='1.2', height='1.2', fixedsize='true')
+    for (src, sym), dest in dfa['transitions'].items():
+        src_id = mapping.get(src, str(src))
+        dest_id = mapping.get(dest, str(dest))
+        lab = EPS if sym == EPS or sym is None else str(sym)
+        g.edge(src_id, dest_id, label=lab)
+    return g, mapping, legend
+
+st.set_page_config(page_title="Algorithme de Thompson (abrégé)", layout="wide")
 
 col_logo, col_title = st.columns([1,5])
 with col_logo:
@@ -360,7 +340,7 @@ with col_logo:
         pass
 with col_title:
     st.title("Algorithme de Thompson")
-    st.caption("Construction de l’automate de Thompson et conversion NFA → DFA")
+    st.caption("Construction NFA → DFA (noms abrégés + légende)")
 
 st.header("Entrée")
 regex = st.text_input("Expression régulière", value="(a|b)*ab(a|b)*")
@@ -369,7 +349,7 @@ colA, colB, colC = st.columns([1,1,1])
 with colA:
     build = st.button("Construire l'automate")
 with colB:
-    show_dfa = st.checkbox("Afficher le DFA (après NFA)", value=False)
+    show_dfa = st.checkbox("Afficher le DFA (après NFA)", value=True)
 with colC:
     show_min = st.checkbox("Afficher le DFA minimisé", value=False)
 
@@ -381,8 +361,6 @@ if 'final_nfa' not in st.session_state:
     st.session_state.final_nfa = None
 if 'idx' not in st.session_state:
     st.session_state.idx = 0
-if 'last_postfix' not in st.session_state:
-    st.session_state.last_postfix = ''
 
 col1, col2 = st.columns([1,2])
 postfix_box = col1.empty()
@@ -401,7 +379,6 @@ if build:
         st.session_state.steps = steps
         st.session_state.final_nfa = final_nfa
         st.session_state.idx = 0
-        st.session_state.last_postfix = postfix
         st.success("Automate NFA construit.")
     except Exception as e:
         st.error(f"Erreur : {e}")
@@ -418,24 +395,29 @@ if st.session_state.steps:
     step = st.session_state.steps[idx]
     postfix_box.markdown(f"**Étape {idx+1}/{len(st.session_state.steps)} — Symbole traité :** {step['tok']}")
     info_box.write(f"Pile : {step['stack']}")
-    dot = transitions_to_dot(step['transitions'], step.get('new', []),
-                             start=st.session_state.final_nfa['start'],
-                             accept=st.session_state.final_nfa['accept'])
-    graph_box.graphviz_chart(dot.source)
+    dot_nfa = build_nfa_graph(step['transitions'], step.get('new', []))
+    graph_box.graphviz_chart(dot_nfa.source)
 
-    # DFA original (non minimisé)
     if show_dfa and st.session_state.final_nfa:
         dfa = nfa_to_dfa(st.session_state.final_nfa)
-        st.subheader("DFA correspondant (non minimisé)")
-        gdfa = transitions_to_dot(dfa['transitions'], start=dfa['start'], accept=None)
+        st.subheader("DFA correspondant (états abrégés)")
+        gdfa, mapping, legend = build_dfa_graph(dfa, abbreviate_names=True)
         st.graphviz_chart(gdfa.source)
+        # legend under graph
+        leg_lines = []
+        for lab, content in legend.items():
+            leg_lines.append(f'- **{lab}** = `{content}`')
+        st.markdown('\\n'.join(leg_lines))
 
-    # DFA minimisé
     if show_min and st.session_state.final_nfa:
         dfa = nfa_to_dfa(st.session_state.final_nfa)
         min_dfa = minimize_dfa(dfa)
-        st.subheader("DFA minimisé")
-        gmin = transitions_to_dot(min_dfa['transitions'], start=min_dfa['start'], accept=None)
+        st.subheader("DFA minimisé (états abrégés)")
+        gmin, m_mapping, m_legend = build_dfa_graph(min_dfa, abbreviate_names=True)
         st.graphviz_chart(gmin.source)
+        leg_lines = []
+        for lab, content in m_legend.items():
+            leg_lines.append(f'- **{lab}** = `{content}`')
+        st.markdown('\\n'.join(leg_lines))
 else:
     st.info("Entrez une expression régulière et cliquez sur *Construire l'automate*.")
