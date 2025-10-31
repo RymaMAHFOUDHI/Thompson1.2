@@ -401,7 +401,14 @@ if st.session_state.steps:
     step = st.session_state.steps[idx]
     postfix_box.markdown(f"**Étape {idx+1}/{len(st.session_state.steps)} — Symbole traité :** {step['tok']}")
     info_box.write(f"Pile : {step['stack']}")
-    dot_nfa = build_nfa_graph(step['transitions'], step.get('new', []))
+
+    # Création d'un NFA temporaire pour éviter KeyError
+    temp_nfa = {
+        'start': st.session_state.final_nfa['start'],
+        'accept': st.session_state.final_nfa['accept'],
+        'transitions': step['transitions']
+    }
+    dot_nfa = build_nfa_graph(temp_nfa, step.get('new', []))
     graph_box.graphviz_chart(dot_nfa.source)
 
     if show_dfa and st.session_state.final_nfa:
@@ -414,11 +421,4 @@ if st.session_state.steps:
 
     if show_min and st.session_state.final_nfa:
         dfa = nfa_to_dfa(st.session_state.final_nfa)
-        min_dfa = minimize_dfa(dfa)
-        st.subheader("DFA minimisé (états abrégés)")
-        gmin, m_mapping, m_legend = build_dfa_graph(min_dfa, abbreviate_names=True)
-        st.graphviz_chart(gmin.source)
-        leg_lines = [f'- **{lab}** = `{content}`' for lab, content in m_legend.items()]
-        st.markdown('\\n'.join(leg_lines))
-else:
-    st.info("Entrez une expression régulière et cliquez sur *Construire l'automate*.")
+        min_dfa
