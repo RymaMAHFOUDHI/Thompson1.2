@@ -1,348 +1,131 @@
 import streamlit as st
-from collections import defaultdict
-import itertools
 import graphviz
-import re
 
-EPS = 'ε'
+# ---------- CONFIG PAGE ----------
+st.set_page_config(page_title="Algorithme de Thompson", layout="wide", page_icon="🧩")
 
-# ---------- Regex helpers ----------
-def expand_plus(regex):
-    pattern_group = re.compile(r'(\([^()]+\))\+')
-    pattern_sym = re.compile(r'([A-Za-z0-9])\+')
-    prev = None
-    s = regex
-    while prev != s:
-        prev = s
-        s = pattern_group.sub(r'\1.\1*', s)
-        s = pattern_sym.sub(r'\1.\1*', s)
-    return s
-
-def insert_concat(regex):
-    res = []
-    prev = None
-    symbols = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-    for c in regex:
-        if prev is not None:
-            if (prev in symbols or prev in ")*?") and (c in symbols or c == '('):
-                res.append('.')
-        res.append(c)
-        prev = c
-    return ''.join(res)
-
-def to_postfix(regex):
-    prec = {'*':3, '?':3, '.':2, '|':1}
-    output = []
-    stack = []
-    i = 0
-    while i < len(regex):
-        c = regex[i]
-        if c.isalnum():
-            output.append(c)
-        elif c == '(':
-            stack.append(c)
-        elif c == ')':
-            while stack and stack[-1] != '(':
-                output.append(stack.pop())
-            stack.pop()
-        else:
-            while stack and stack[-1] != '(' and prec.get(stack[-1],0) >= prec.get(c,0):
-                output.append(stack.pop())
-            stack.append(c)
-        i += 1
-    while stack:
-        output.append(stack.pop())
-    return ''.join(output)
-
-# ---------- Thompson ----------
-class Fragment:
-    def __init__(self, start, accept):
-        self.start = start
-        self.accept = accept
-
-def thompson_with_steps(postfix):
-    transitions = defaultdict(list)
-    counter = itertools.count()
-    stack = []
-    steps = []
-
-    def snapshot(tok, new_transitions):
-        copy_trans = {s:list(lst) for s,lst in transitions.items()}
-        stack_repr = [f"[{frag.start}->{frag.accept}]" for frag in stack]
-        steps.append({'tok': tok, 'stack': list(stack_repr), 'transitions': copy_trans, 'new': new_transitions})
-
-    for tok in postfix:
-        new_trans = []
-        if tok.isalnum():
-            s = next(counter); a = next(counter)
-            transitions[s].append((tok,a))
-            transitions.setdefault(a,[])
-            new_trans.append((s,tok,a))
-            stack.append(Fragment(s,a))
-        elif tok == '.':
-            f2 = stack.pop(); f1 = stack.pop()
-            transitions[f1.accept].append((EPS,f2.start))
-            new_trans.append((f1.accept,EPS,f2.start))
-            stack.append(Fragment(f1.start,f2.accept))
-        elif tok == '|':
-            f2 = stack.pop(); f1 = stack.pop()
-            s = next(counter); a = next(counter)
-            transitions[s].append((EPS,f1.start))
-            transitions[s].append((EPS,f2.start))
-            transitions[f1.accept].append((EPS,a))
-            transitions[f2.accept].append((EPS,a))
-            transitions.setdefault(s,[]); transitions.setdefault(a,[])
-            new_trans += [(s,EPS,f1.start),(s,EPS,f2.start),(f1.accept,EPS,a),(f2.accept,EPS,a)]
-            stack.append(Fragment(s,a))
-        elif tok == '*':
-            f = stack.pop()
-            s = next(counter); a = next(counter)
-            transitions[s].append((EPS,f.start))
-            transitions[s].append((EPS,a))
-            transitions[f.accept].append((EPS,f.start))
-            transitions[f.accept].append((EPS,a))
-            transitions.setdefault(s,[]); transitions.setdefault(a,[])
-            new_trans += [(s,EPS,f.start),(s,EPS,a),(f.accept,EPS,f.start),(f.accept,EPS,a)]
-            stack.append(Fragment(s,a))
-        elif tok == '?':
-            f = stack.pop()
-            s = next(counter); a = next(counter)
-            transitions[s].append((EPS,f.start))
-            transitions[s].append((EPS,a))
-            transitions[f.accept].append((EPS,a))
-            transitions.setdefault(s,[]); transitions.setdefault(a,[])
-            new_trans += [(s,EPS,f.start),(s,EPS,a),(f.accept,EPS,a)]
-            stack.append(Fragment(s,a))
-        snapshot(tok,new_trans)
-
-    frag = stack.pop()
-    final_nfa = {'start':frag.start,'accept':frag.accept,'transitions':dict(transitions)}
-    return steps, final_nfa
-
-# ---------- NFA → DFA ----------
-def epsilon_closure(states,transitions):
-    closure = set(states)
-    stack = list(states)
-    while stack:
-        s = stack.pop()
-        for sym,d in transitions.get(s,[]):
-            if sym==EPS and d not in closure:
-                closure.add(d); stack.append(d)
-    return closure
-
-def move(states,symbol,transitions):
-    result=set()
-    for s in states:
-        for sym,d in transitions.get(s,[]):
-            if sym==symbol:
-                result.add(d)
-    return result
-
-def nfa_to_dfa(nfa):
-    trans = nfa['transitions']
-    start = nfa['start']; accept = nfa['accept']
-    symbols = sorted({sym for lst in trans.values() for sym,_ in lst if sym and sym!=EPS})
-
-    start_set = frozenset(epsilon_closure({start},trans))
-    unmarked=[start_set]
-    dfa_states={start_set:0}
-    dfa_trans={}; dfa_accepts=set()
-    if accept in start_set: dfa_accepts.add(start_set)
-
-    while unmarked:
-        T=unmarked.pop()
-        for sym in symbols:
-            U = frozenset(epsilon_closure(move(T,sym,trans),trans))
-            if not U: continue
-            if U not in dfa_states:
-                dfa_states[U]=len(dfa_states)
-                unmarked.append(U)
-                if accept in U: dfa_accepts.add(U)
-            dfa_trans[(T,sym)] = U
-
-    # renommage DFA
-    letters="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    mapping={fs:letters[i] for i,fs in enumerate(dfa_states.keys())}
-    legend={letters[i]:"{" + ",".join(map(str,sorted(fs))) + "}" for i,fs in enumerate(dfa_states.keys())}
-    
-    dfa_named_trans={}
-    for (src,sym),dest in dfa_trans.items():
-        key=(mapping[src],mapping[dest])
-        if key in dfa_named_trans: dfa_named_trans[key].append(sym)
-        else: dfa_named_trans[key]=[sym]
-
-    start_named = mapping[start_set]
-    accepts_named = {mapping[fs] for fs in dfa_accepts}
-    return {'states':list(mapping.values()),'start':start_named,'accepts':accepts_named,'transitions':dfa_named_trans,'symbols':symbols,'legend':legend}
-
-# ---------- DFA Minimisation ----------
-def minimize_dfa(dfa):
-    states = list(dfa['states'])
-    symbols = dfa['symbols']
-    accepts = dfa['accepts']
-    non_accepts = set(states)-accepts
-    P = [frozenset(accepts)] if accepts else []
-    if non_accepts: P.append(frozenset(non_accepts))
-    W = P.copy()
-
-    trans = {}
-    for s in states:
-        trans[s]={sym:next((d for (src,d),syms in dfa['transitions'].items() if src==s and sym in syms),None) for sym in symbols}
-
-    while W:
-        A = W.pop()
-        for c in symbols:
-            X={q for q in states if trans[q].get(c) in A}
-            newP=[]
-            for Y in P:
-                inter = Y & X
-                diff = Y - X
-                if inter and diff:
-                    newP.append(frozenset(inter)); newP.append(frozenset(diff))
-                    if Y in W: W.remove(Y); W.append(frozenset(inter)); W.append(frozenset(diff))
-                    else: W.append(frozenset(inter) if len(inter)<=len(diff) else frozenset(diff))
-                else: newP.append(Y)
-            P=newP
-
-    roman=["I","II","III","IV","V","VI","VII","VIII","IX","X"]
-    state_names = {}
-    legend={}
-    for i,block in enumerate(P):
-        name=roman[i] if i<len(roman) else f"S{i}"
-        state_names[frozenset(block)]=name
-        legend[name]="{" + ",".join(sorted(block)) + "}"
-
-    new_trans={}
-    for blk in P:
-        src = state_names[frozenset(blk)]
-        for sym in symbols:
-            dest = next((state_names[frozenset(b)] for b in P if trans[next(iter(blk))].get(sym) in b),None)
-            if dest:
-                key=(src,dest)
-                if key in new_trans: new_trans[key].append(sym)
-                else: new_trans[key]=[sym]
-
-    start_blk = next(frozenset(b) for b in P if dfa['start'] in b)
-    accept_blks = [frozenset(b) for b in P if any(s in dfa['accepts'] for s in b)]
-
-    return {'states':list(state_names.values()),'start':state_names[start_blk],
-            'accepts':{state_names[b] for b in accept_blks},
-            'transitions':new_trans,'symbols':symbols,'legend':legend}
-
-# ---------- Graph builder ----------
-def build_nfa_graph(nfa,new_edges=None):
-    g = graphviz.Digraph()
-    g.attr(rankdir='LR', ranksep='1', nodesep='0.6')
-    g.attr('node', shape='circle', fixedsize='true', width='1.2', height='1.2', fontsize='18')
-
-    transitions = nfa['transitions']
-    start = nfa['start']
-    accept = nfa['accept']
-
-    g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
-    g.edge('start', f"n{start}", fontsize='16')
-
-    all_states = set(transitions.keys())
-    for s, lst in transitions.items():
-        for _, d in lst:
-            all_states.add(d)
-
-    for s in sorted(all_states, key=lambda x: int(str(x)) if str(x).isdigit() else str(x)):
-        shape = 'doublecircle' if s == accept else 'circle'
-        color = 'red' if s == start else 'black'
-        g.node(f"n{s}", label=str(s), shape=shape, color=color, width='1.2', height='1.2', fontsize='18')
-
-    for s, lst in transitions.items():
-        for sym, d in lst:
-            label = EPS if sym == EPS or sym is None else str(sym)
-            color = "red" if new_edges and (s, sym, d) in new_edges else "black"
-            g.edge(f"n{s}", f"n{d}", label=label, color=color, fontsize='16')
-
-    return g
-
-def build_graph_minimized(dfa_min):
-    g=graphviz.Digraph()
-    g.attr(rankdir='LR',ranksep='1',nodesep='0.5')
-    g.attr('node',shape='circle',fixedsize='true',width='1.2',height='1.2',fontsize='12')
-    g.node('start',shape='point',width='0.1',height='0.1',fixedsize='true'); g.edge('start',dfa_min['start'])
-    for s in dfa_min['states']:
-        shape='doublecircle' if s in dfa_min['accepts'] else 'circle'
-        g.node(s,label=s,shape=shape,width='1.2',height='1.2',fixedsize='true')
-    for (src,dest),syms in dfa_min['transitions'].items():
-        g.edge(src,dest,label=",".join(syms))
-    return g
-
-# ---------- Streamlit ----------
-st.set_page_config(page_title="Algorithme de Thompson", layout="wide")
-col_logo,col_title=st.columns([1,5])
+# ---------- HEADER ----------
+col_logo, col_title = st.columns([1,6], gap="small")
 with col_logo:
-    try: st.image("logo.png",width=150)
-    except: pass
-with col_title:
-    st.markdown("<h1 style='margin-top:-20px;'>Algorithme de Thompson</h1>", unsafe_allow_html=True)
-    st.caption("NFA → DFA → DFA minimisé (états abrégés + légende)")
-
-regex = st.text_input("Expression régulière", value="(a|b)*ab(a|b)*")
-colA,colB,colC=st.columns([1,1,1])
-with colA: build_btn=st.button("Construire l'automate")
-with colB: show_dfa=st.checkbox("Afficher DFA",value=True)
-with colC: show_min=st.checkbox("Afficher DFA minimisé",value=True)
-
-if 'steps' not in st.session_state: st.session_state.steps=[]
-if 'final_nfa' not in st.session_state: st.session_state.final_nfa=None
-if 'idx' not in st.session_state: st.session_state.idx=0
-
-nav1,nav2=st.columns([1,1])
-prev_btn=nav1.button("← Étape précédente")
-next_btn=nav2.button("Étape suivante")
-
-graph_placeholder = st.empty()
-
-if build_btn:
     try:
-        regex_expanded=expand_plus(regex.strip())
-        regex_concat=insert_concat(regex_expanded)
-        postfix=to_postfix(regex_concat)
-        steps, final_nfa=thompson_with_steps(postfix)
-        st.session_state.steps=steps; st.session_state.final_nfa=final_nfa; st.session_state.idx=0
-        st.success("NFA construit.")
-    except Exception as e:
-        st.error(f"Erreur : {e}")
-        st.session_state.steps=[]; st.session_state.final_nfa=None
+        st.image("logo.png", width=160)  # logo agrandi
+    except:
+        pass
+with col_title:
+    st.markdown("<h1 style='margin-bottom:0px; margin-top:0px;'>Algorithme de Thompson</h1>", unsafe_allow_html=True)
+    st.caption("Transformation pas à pas : NFA → DFA → DFA minimisé")
 
-if st.session_state.steps:
-    if next_btn and st.session_state.idx<len(st.session_state.steps)-1: st.session_state.idx+=1
-    if prev_btn and st.session_state.idx>0: st.session_state.idx-=1
-    idx=st.session_state.idx; step=st.session_state.steps[idx]
-    st.markdown(f"**Étape {idx+1}/{len(st.session_state.steps)} — Symbole traité :** {step['tok']}")
-    st.write(f"Pile : {step['stack']}")
-    temp_nfa={'start':st.session_state.final_nfa['start'],'accept':st.session_state.final_nfa['accept'],
-              'transitions':step['transitions']}
-    dot_nfa=build_nfa_graph(temp_nfa, step.get('new',[]))
-    graph_placeholder.graphviz_chart(dot_nfa.source)
+# ---------- STYLE ----------
+st.markdown("""
+<style>
+div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] {text-align: center; display: flex; justify-content: center;}
+h1, h2, h3, h4 {text-align: center;}
+</style>
+""", unsafe_allow_html=True)
 
-    if show_dfa:
-        dfa=nfa_to_dfa(st.session_state.final_nfa)
-        gdfa=graphviz.Digraph()
-        gdfa.attr(rankdir='LR')
-        gdfa.node('start',shape='point')
-        gdfa.edge('start',dfa['start'])
-        for s in dfa['states']:
-            shape='doublecircle' if s in dfa['accepts'] else 'circle'
-            gdfa.node(s,label=s,shape=shape)
-        for (src,dest),syms in dfa['transitions'].items():
-            gdfa.edge(src,dest,label=",".join(syms))
-        st.subheader("DFA correspondant (états abrégés)")
-        st.graphviz_chart(gdfa.source)
-        st.markdown("\n".join([f"- **{k}** = `{v}`" for k,v in dfa['legend'].items()]))
+# ---------- DÉFINITION GRAPHE MULTISYMBOLE ----------
+def build_graph_multisym(auto, start_key='start', accept_key='accept', transitions_key='transitions', title=None, enlarge=False):
+    dot = graphviz.Digraph()
+    dot.attr(rankdir='LR', size='8,5')
 
-    if show_min:
-        dfa=nfa_to_dfa(st.session_state.final_nfa)
-        min_dfa=minimize_dfa(dfa)
-        st.subheader("DFA minimisé (états abrégés)")
-        gmin=build_graph_minimized(min_dfa)
-        st.graphviz_chart(gmin.source)
-        st.markdown("\n".join([f"- **{k}** = `{v}`" for k,v in min_dfa['legend'].items()]))
+    if enlarge:
+        dot.attr('node', shape='circle', fontsize='22', width='1.2', height='1.2')
+    else:
+        dot.attr('node', shape='circle', fontsize='18')
 
-else:
-    st.info("Entrez une expression régulière et cliquez sur *Construire l'automate*.")
+    start = auto[start_key]
+    accept = auto[accept_key]
+    transitions = auto[transitions_key]
+
+    # Regrouper transitions multi-symboles
+    merged = {}
+    for (src, sym), dests in transitions.items():
+        if isinstance(dests, list):
+            for d in dests:
+                merged.setdefault((src, d), set()).add(sym)
+        else:
+            merged.setdefault((src, dests), set()).add(sym)
+
+    for s in {src for (src, _) in merged.keys()} | {d for (_, d) in merged.keys()}:
+        if s == start:
+            dot.node(str(s), str(s), color='red', penwidth='3')  # état initial bord rouge
+        elif s in accept if isinstance(accept, list) else [accept]:
+            dot.node(str(s), str(s), peripheries='2', color='green')
+        else:
+            dot.node(str(s), str(s))
+
+    for (src, dest), syms in merged.items():
+        dot.edge(str(src), str(dest), label=",".join(sorted(syms)))
+
+    if title:
+        dot.attr(label=title, labelloc='t', fontsize='24')
+
+    return dot
+
+# ---------- EXEMPLE SIMULÉ ----------
+# NFA (agrandi)
+nfa = {
+    'start': 'q0',
+    'accept': ['q2'],
+    'transitions': {
+        ('q0', 'a'): ['q0', 'q1'],
+        ('q1', 'b'): ['q2']
+    }
+}
+
+# DFA renommé A,B,C
+dfa = {
+    'start': 'A',
+    'accept': ['C'],
+    'transitions': {
+        ('A', 'a'): 'B',
+        ('B', 'a'): 'B',
+        ('B', 'b'): 'C'
+    }
+}
+
+# DFA minimisé renommé I,II,III
+min_dfa = {
+    'start': 'I',
+    'accept': ['III'],
+    'transitions': {
+        ('I', 'a'): 'II',
+        ('II', 'a'): 'II',
+        ('II', 'b'): 'III'
+    },
+    'legend': {'I': '{A}', 'II': '{B}', 'III': '{C}'}
+}
+
+# ---------- INTERFACE ----------
+if "step" not in st.session_state:
+    st.session_state.step = 0
+
+col_prev, col_next = st.columns([1,1], gap="medium")
+with col_prev:
+    if st.button("⬅️ Étape précédente") and st.session_state.step > 0:
+        st.session_state.step -= 1
+with col_next:
+    if st.button("Étape suivante ➡️") and st.session_state.step < 2:
+        st.session_state.step += 1
+
+step = st.session_state.step
+
+# Centrer le graphe
+st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
+
+if step == 0:
+    st.subheader("NFA obtenu (agrandi)")
+    g_nfa = build_graph_multisym(nfa, enlarge=True)
+    st.graphviz_chart(g_nfa)
+elif step == 1:
+    st.subheader("Automate déterministe (DFA)")
+    g_dfa = build_graph_multisym(dfa)
+    st.graphviz_chart(g_dfa)
+elif step == 2:
+    st.subheader("Automate minimisé (DFA minimal)")
+    g_min = build_graph_multisym(min_dfa)
+    st.graphviz_chart(g_min)
+    legend_text = "Légende : " + ", ".join(f"{k}={v}" for k,v in min_dfa['legend'].items())
+    st.markdown(f"<p style='text-align:center;font-size:18px;'><b>{legend_text}</b></p>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
