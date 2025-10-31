@@ -286,25 +286,30 @@ def build_nfa_graph(nfa, new_edges=None):
     g = graphviz.Digraph()
     g.attr(rankdir='LR', ranksep='1', nodesep='0.5')
     g.attr('node', shape='circle', fixedsize='true', width='1', height='1', fontsize='12')
+
     transitions = nfa['transitions']
     start = nfa['start']
     accept = nfa['accept']
+
     g.node('start', shape='point', width='0.1', height='0.1', fixedsize='true')
     g.edge('start', f"n{start}")
+
     all_states = set(transitions.keys())
     for s, lst in transitions.items():
         for _, d in lst:
             all_states.add(d)
+
     for s in sorted(all_states, key=lambda x: int(str(x)) if str(x).isdigit() else str(x)):
-        if s == accept:
-            g.node(f"n{s}", label=str(s), shape='doublecircle', width='1', height='1', fixedsize='true')
-        else:
-            g.node(f"n{s}", label=str(s), shape='circle', width='1', height='1', fixedsize='true')
+        shape = 'doublecircle' if s == accept else 'circle'
+        color = 'red' if s == start else 'black'
+        g.node(f"n{s}", label=str(s), shape=shape, color=color, width='1', height='1', fixedsize='true')
+
     for s, lst in transitions.items():
         for sym, d in lst:
             label = EPS if sym == EPS or sym is None else str(sym)
             color = "red" if new_edges and (s, sym, d) in new_edges else "black"
             g.edge(f"n{s}", f"n{d}", label=label, color=color)
+
     return g
 
 def build_dfa_graph(dfa, abbreviate_names=True):
@@ -330,6 +335,7 @@ def build_dfa_graph(dfa, abbreviate_names=True):
         g.edge(src_id, dest_id, label=lab)
     return g, mapping, legend
 
+# ---------- Streamlit UI ----------
 st.set_page_config(page_title="Algorithme de Thompson (abrégé)", layout="wide")
 
 col_logo, col_title = st.columns([1,5])
@@ -403,10 +409,7 @@ if st.session_state.steps:
         st.subheader("DFA correspondant (états abrégés)")
         gdfa, mapping, legend = build_dfa_graph(dfa, abbreviate_names=True)
         st.graphviz_chart(gdfa.source)
-        # legend under graph
-        leg_lines = []
-        for lab, content in legend.items():
-            leg_lines.append(f'- **{lab}** = `{content}`')
+        leg_lines = [f'- **{lab}** = `{content}`' for lab, content in legend.items()]
         st.markdown('\\n'.join(leg_lines))
 
     if show_min and st.session_state.final_nfa:
@@ -415,9 +418,7 @@ if st.session_state.steps:
         st.subheader("DFA minimisé (états abrégés)")
         gmin, m_mapping, m_legend = build_dfa_graph(min_dfa, abbreviate_names=True)
         st.graphviz_chart(gmin.source)
-        leg_lines = []
-        for lab, content in m_legend.items():
-            leg_lines.append(f'- **{lab}** = `{content}`')
+        leg_lines = [f'- **{lab}** = `{content}`' for lab, content in m_legend.items()]
         st.markdown('\\n'.join(leg_lines))
 else:
     st.info("Entrez une expression régulière et cliquez sur *Construire l'automate*.")
